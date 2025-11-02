@@ -32,6 +32,9 @@ pydantic>=2.0.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 
+# LLM Integration
+groq>=0.33.0
+
 # Jupyter
 jupyter>=1.0.0
 ipykernel>=6.25.0

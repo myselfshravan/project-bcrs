@@ -8,7 +8,7 @@ All 5/5 tests passed! The system is ready for your presentation.
 
 ## 🎯 Three Ways to Use T-CRIS
 
-### 1. **Launch Interactive Dashboard** (RECOMMENDED FOR DEMO)
+### 1. **Launch Interactive Dashboard** (RECOMMENDED FOR DEMO) ✨ NEW AI FEATURES!
 
 ```bash
 cd /Users/shravan/personal-github/project-bcrs
@@ -19,13 +19,17 @@ python3 -m streamlit run dashboard/app.py
 - Dashboard opens in your browser automatically
 - 5 pages: Overview, Survival Analysis, Predictions, Counterfactual, Model Performance
 - Fully interactive with live predictions
+- **NEW**: AI-powered explanations using Groq LLM (Llama 3.3 70B)!
 
 **For your demo:**
 1. Navigate to **🎯 Predictions** page
 2. Enter patient characteristics (e.g., 3 tumors, 2.5cm, placebo)
 3. Click "Predict Risk" → Shows risk score and survival curve
-4. Navigate to **🔀 Counterfactual** page
-5. Click "Compare Treatments" → Shows which treatment is best
+4. **NEW**: Click "💬 Explain This Prediction" → AI generates plain-language explanation
+5. **NEW**: Click "📄 Generate Clinical Report" → EHR-ready summary
+6. Navigate to **🔀 Counterfactual** page
+7. Click "Compare Treatments" → Shows which treatment is best
+8. **NEW**: See automatic AI Treatment Rationale with patient-friendly explanation!
 
 ---
 
@@ -73,6 +77,7 @@ python3 scripts/verify_system.py
 2. Counterfactual treatment analysis
 3. Hybrid statistical-ML-DL framework
 4. Production-ready interactive dashboard
+5. **AI-powered clinical explanations** (Groq LLM integration)
 
 ### What Works
 ✅ All data loading and processing
@@ -81,6 +86,7 @@ python3 scripts/verify_system.py
 ✅ Live predictions
 ✅ Treatment comparisons
 ✅ Visualizations
+✅ **AI explanations & clinical reports** (Groq LLM)
 
 ---
 

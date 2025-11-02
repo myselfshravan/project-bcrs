@@ -21,6 +21,7 @@ import torch
 from tcris.data.loaders import BladderDataLoader
 from tcris.data.fusion import DataFusionEngine
 from tcris.features.extractors import create_features
+from tcris.llm.groq_service import GroqService
 
 # Page config
 st.set_page_config(
@@ -29,6 +30,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize Groq service (cached)
+@st.cache_resource
+def load_groq_service():
+    """Initialize Groq service."""
+    try:
+        return GroqService()
+    except Exception as e:
+        st.warning(f"⚠️ AI explanations unavailable: {e}")
+        return None
 
 # Load models and data (cached)
 @st.cache_resource
@@ -83,6 +94,7 @@ def load_data():
 # Load everything
 models = load_models()
 unified_df, df_features, patient_data, fusion = load_data()
+groq_service = load_groq_service()
 
 # Title
 st.title("🏥 T-CRIS: Temporal Cancer Recurrence Intelligence System")
@@ -363,6 +375,49 @@ elif page == "🎯 Predictions":
                         color="Impact", color_continuous_scale="reds")
             st.plotly_chart(fig, use_container_width=True)
 
+            # AI Explanation Section
+            if groq_service:
+                st.markdown("---")
+                st.subheader("🤖 AI-Powered Insights")
+
+                col_ai1, col_ai2 = st.columns(2)
+
+                with col_ai1:
+                    if st.button("💬 Explain This Prediction", type="secondary"):
+                        with st.spinner("Generating AI explanation..."):
+                            explanation = groq_service.explain_prediction(
+                                baseline_tumors=baseline_tumors,
+                                baseline_size=baseline_size,
+                                treatment=treatment,
+                                time_horizon=time_horizon,
+                                cox_risk=cox_risk,
+                                recurrence_prob=recurrence_prob,
+                                risk_level=risk_level.replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", "")
+                            )
+                            st.markdown("#### 📝 Plain-Language Explanation")
+                            st.info(explanation)
+
+                with col_ai2:
+                    if st.button("📄 Generate Clinical Report", type="secondary"):
+                        with st.spinner("Generating clinical report..."):
+                            additional_features = {
+                                "Tumor Burden Index": baseline_tumors * baseline_size,
+                                "Risk Score": f"{cox_risk:.3f}",
+                                "Treatment": treatment.title()
+                            }
+                            report = groq_service.generate_clinical_report(
+                                baseline_tumors=baseline_tumors,
+                                baseline_size=baseline_size,
+                                treatment=treatment,
+                                time_horizon=time_horizon,
+                                cox_risk=cox_risk,
+                                recurrence_prob=recurrence_prob,
+                                risk_level=risk_level.replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", ""),
+                                additional_features=additional_features
+                            )
+                            st.markdown("#### 📋 Clinical Summary")
+                            st.text_area("EHR-Ready Report", report, height=300)
+
             st.success("✅ Prediction complete! Use these results to inform treatment decisions.")
 
         else:
@@ -435,6 +490,52 @@ elif page == "🔀 Counterfactual":
             st.success(f"### 💊 Recommended Treatment: **{best_treatment.upper()}**")
             st.info(f"**Rationale**: {best_treatment.title()} shows the lowest predicted recurrence risk "
                    f"({best_risk:.1f}%) at {time_horizon} months for this patient profile.")
+
+            # AI Treatment Explanation
+            if groq_service:
+                st.markdown("---")
+                st.subheader("🤖 AI Treatment Rationale")
+
+                with st.spinner("Generating personalized treatment explanation..."):
+                    patient_profile = {
+                        "Baseline Tumors": baseline_tumors,
+                        "Tumor Size": f"{baseline_size} cm",
+                        "Tumor Burden": baseline_tumors * baseline_size
+                    }
+
+                    treatment_data = {
+                        tx: {
+                            "risk": results[tx]["risk"],
+                            "survival": results[tx]["survival_prob"] / 100
+                        }
+                        for tx in treatments
+                    }
+
+                    explanation = groq_service.explain_treatment_choice(
+                        patient_profile=patient_profile,
+                        treatments=treatment_data,
+                        recommended=best_treatment
+                    )
+
+                    st.info(explanation)
+
+                # Simple comparison summary
+                worst_treatment = max(results, key=lambda x: results[x]["recurrence_prob"])
+                worst_risk = results[worst_treatment]["recurrence_prob"]
+                risk_reduction = ((worst_risk - best_risk) / worst_risk) * 100
+
+                best_surv = results[best_treatment]["survival_prob"]
+                worst_surv = results[worst_treatment]["survival_prob"]
+                surv_improvement = best_surv - worst_surv
+
+                if risk_reduction > 5:  # Only show if meaningful difference
+                    with st.expander("📊 Treatment Benefit Summary"):
+                        simple_explanation = groq_service.explain_treatment_simple(
+                            recommended=best_treatment,
+                            risk_reduction=risk_reduction,
+                            survival_improvement=surv_improvement
+                        )
+                        st.success(simple_explanation)
 
             # Visualize comparison
             st.subheader("Visual Comparison")
