@@ -279,10 +279,11 @@ elif page == "🎯 Predictions":
     with col3:
         time_horizon = st.slider("Prediction Time (months)", 6, 60, 24, 6)
 
-    if st.button("🔮 Predict Risk", type="primary"):
-        st.markdown("---")
-        st.subheader("Prediction Results")
+    # Initialize session state for predictions
+    if "prediction_results" not in st.session_state:
+        st.session_state.prediction_results = None
 
+    if st.button("🔮 Predict Risk", type="primary"):
         # Prepare input
         input_data = pd.DataFrame({
             "baseline_tumors": [baseline_tumors],
@@ -309,18 +310,7 @@ elif page == "🎯 Predictions":
             cox_risk = models["cox"].predict_partial_hazard(input_scaled).values[0]
             cox_surv = models["cox"].predict_survival_function(input_scaled, times=[time_horizon])
             cox_surv_prob = cox_surv.iloc[0, 0]
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric("Risk Score", f"{cox_risk:.2f}")
-
-            with col2:
-                recurrence_prob = (1 - cox_surv_prob) * 100
-                st.metric(f"{time_horizon}-Month Recurrence Risk", f"{recurrence_prob:.1f}%")
-
-            with col3:
-                st.metric(f"{time_horizon}-Month Recurrence-Free Prob", f"{cox_surv_prob*100:.1f}%")
+            recurrence_prob = (1 - cox_surv_prob) * 100
 
             # Risk interpretation
             if recurrence_prob < 30:
@@ -333,95 +323,124 @@ elif page == "🎯 Predictions":
                 risk_level = "🔴 High"
                 risk_color = "red"
 
-            st.markdown(f"### Risk Level: {risk_level}")
+            # Store in session state
+            st.session_state.prediction_results = {
+                "baseline_tumors": baseline_tumors,
+                "baseline_size": baseline_size,
+                "treatment": treatment,
+                "time_horizon": time_horizon,
+                "cox_risk": cox_risk,
+                "recurrence_prob": recurrence_prob,
+                "cox_surv_prob": cox_surv_prob,
+                "risk_level": risk_level,
+                "risk_color": risk_color,
+                "input_scaled": input_scaled
+            }
 
-            # Survival curve
-            st.subheader("Predicted Survival Curve")
-            times = np.linspace(0, 60, 100)
-            surv_curve = models["cox"].predict_survival_function(input_scaled, times=times)
+    # Display results if they exist
+    if st.session_state.prediction_results is not None:
+        results = st.session_state.prediction_results
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=times,
-                y=surv_curve.iloc[:, 0],
-                mode="lines",
-                name="Predicted Survival",
-                line=dict(width=3, color=risk_color)
-            ))
+        st.markdown("---")
+        st.subheader("Prediction Results")
 
-            fig.add_vline(x=time_horizon, line_dash="dash", line_color="gray",
-                          annotation_text=f"{time_horizon} months")
+        col1, col2, col3 = st.columns(3)
 
-            fig.update_layout(
-                xaxis_title="Time (months)",
-                yaxis_title="Recurrence-Free Probability",
-                hovermode="x unified",
-                height=400
-            )
+        with col1:
+            st.metric("Risk Score", f"{results['cox_risk']:.2f}")
 
-            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.metric(f"{results['time_horizon']}-Month Recurrence Risk", f"{results['recurrence_prob']:.1f}%")
 
-            # Feature contribution
-            st.subheader("Key Risk Factors")
+        with col3:
+            st.metric(f"{results['time_horizon']}-Month Recurrence-Free Prob", f"{results['cox_surv_prob']*100:.1f}%")
 
-            feature_importance = pd.DataFrame({
-                "Feature": ["Baseline Tumors", "Tumor Size", "Tumor Burden", "Treatment"],
-                "Impact": [baseline_tumors / 10, baseline_size / 8,
-                          (baseline_tumors * baseline_size) / 40,
-                          0.3 if treatment == "thiotepa" else 0.8]
-            })
+        st.markdown(f"### Risk Level: {results['risk_level']}")
 
-            fig = px.bar(feature_importance, x="Impact", y="Feature", orientation="h",
-                        color="Impact", color_continuous_scale="reds")
-            st.plotly_chart(fig, use_container_width=True)
+        # Survival curve
+        st.subheader("Predicted Survival Curve")
+        times = np.linspace(0, 60, 100)
+        surv_curve = models["cox"].predict_survival_function(results["input_scaled"], times=times)
 
-            # AI Explanation Section
-            if groq_service:
-                st.markdown("---")
-                st.subheader("🤖 AI-Powered Insights")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=times,
+            y=surv_curve.iloc[:, 0],
+            mode="lines",
+            name="Predicted Survival",
+            line=dict(width=3, color=results["risk_color"])
+        ))
 
-                col_ai1, col_ai2 = st.columns(2)
+        fig.add_vline(x=results["time_horizon"], line_dash="dash", line_color="gray",
+                      annotation_text=f"{results['time_horizon']} months")
 
-                with col_ai1:
-                    if st.button("💬 Explain This Prediction", type="secondary"):
-                        with st.spinner("Generating AI explanation..."):
-                            explanation = groq_service.explain_prediction(
-                                baseline_tumors=baseline_tumors,
-                                baseline_size=baseline_size,
-                                treatment=treatment,
-                                time_horizon=time_horizon,
-                                cox_risk=cox_risk,
-                                recurrence_prob=recurrence_prob,
-                                risk_level=risk_level.replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", "")
-                            )
-                            st.markdown("#### 📝 Plain-Language Explanation")
-                            st.info(explanation)
+        fig.update_layout(
+            xaxis_title="Time (months)",
+            yaxis_title="Recurrence-Free Probability",
+            hovermode="x unified",
+            height=400
+        )
 
-                with col_ai2:
-                    if st.button("📄 Generate Clinical Report", type="secondary"):
-                        with st.spinner("Generating clinical report..."):
-                            additional_features = {
-                                "Tumor Burden Index": baseline_tumors * baseline_size,
-                                "Risk Score": f"{cox_risk:.3f}",
-                                "Treatment": treatment.title()
-                            }
-                            report = groq_service.generate_clinical_report(
-                                baseline_tumors=baseline_tumors,
-                                baseline_size=baseline_size,
-                                treatment=treatment,
-                                time_horizon=time_horizon,
-                                cox_risk=cox_risk,
-                                recurrence_prob=recurrence_prob,
-                                risk_level=risk_level.replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", ""),
-                                additional_features=additional_features
-                            )
-                            st.markdown("#### 📋 Clinical Summary")
-                            st.text_area("EHR-Ready Report", report, height=300)
+        st.plotly_chart(fig, use_container_width=True)
 
-            st.success("✅ Prediction complete! Use these results to inform treatment decisions.")
+        # Feature contribution
+        st.subheader("Key Risk Factors")
 
-        else:
-            st.error("Models not loaded. Please train models first.")
+        feature_importance = pd.DataFrame({
+            "Feature": ["Baseline Tumors", "Tumor Size", "Tumor Burden", "Treatment"],
+            "Impact": [results["baseline_tumors"] / 10, results["baseline_size"] / 8,
+                      (results["baseline_tumors"] * results["baseline_size"]) / 40,
+                      0.3 if results["treatment"] == "thiotepa" else 0.8]
+        })
+
+        fig = px.bar(feature_importance, x="Impact", y="Feature", orientation="h",
+                    color="Impact", color_continuous_scale="reds")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # AI Explanation Section
+        if groq_service:
+            st.markdown("---")
+            st.subheader("🤖 AI-Powered Insights")
+
+            col_ai1, col_ai2 = st.columns(2)
+
+            with col_ai1:
+                if st.button("💬 Explain This Prediction", type="secondary"):
+                    with st.spinner("Generating AI explanation..."):
+                        explanation = groq_service.explain_prediction(
+                            baseline_tumors=results["baseline_tumors"],
+                            baseline_size=results["baseline_size"],
+                            treatment=results["treatment"],
+                            time_horizon=results["time_horizon"],
+                            cox_risk=results["cox_risk"],
+                            recurrence_prob=results["recurrence_prob"],
+                            risk_level=results["risk_level"].replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", "")
+                        )
+                        st.markdown("#### 📝 Plain-Language Explanation")
+                        st.info(explanation)
+
+            with col_ai2:
+                if st.button("📄 Generate Clinical Report", type="secondary"):
+                    with st.spinner("Generating clinical report..."):
+                        additional_features = {
+                            "Tumor Burden Index": results["baseline_tumors"] * results["baseline_size"],
+                            "Risk Score": f"{results['cox_risk']:.3f}",
+                            "Treatment": results["treatment"].title()
+                        }
+                        report = groq_service.generate_clinical_report(
+                            baseline_tumors=results["baseline_tumors"],
+                            baseline_size=results["baseline_size"],
+                            treatment=results["treatment"],
+                            time_horizon=results["time_horizon"],
+                            cox_risk=results["cox_risk"],
+                            recurrence_prob=results["recurrence_prob"],
+                            risk_level=results["risk_level"].replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", ""),
+                            additional_features=additional_features
+                        )
+                        st.markdown("#### 📋 Clinical Summary")
+                        st.text_area("EHR-Ready Report", report, height=300)
+
+        st.success("✅ Prediction complete! Use these results to inform treatment decisions.")
 
 elif page == "🔀 Counterfactual":
     st.header("🔀 Counterfactual Analysis: Treatment Comparison")
@@ -437,9 +456,11 @@ elif page == "🔀 Counterfactual":
     with col2:
         time_horizon = st.slider("Prediction Time (months)", 6, 60, 24, 6, key="cf_time")
 
-    if st.button("🔬 Compare Treatments", type="primary"):
-        st.markdown("---")
+    # Initialize session state for counterfactual results
+    if "cf_results" not in st.session_state:
+        st.session_state.cf_results = None
 
+    if st.button("🔬 Compare Treatments", type="primary"):
         if "cox" in models:
             treatments = ["placebo", "thiotepa", "pyridoxine"]
             results = {}
@@ -471,86 +492,98 @@ elif page == "🔀 Counterfactual":
                     "survival_prob": surv_prob * 100
                 }
 
-            # Display comparison
-            st.subheader("Treatment Comparison Results")
-
-            col1, col2, col3 = st.columns(3)
-
-            for col, treatment in zip([col1, col2, col3], treatments):
-                with col:
-                    st.markdown(f"### {treatment.title()}")
-                    st.metric("Recurrence Risk", f"{results[treatment]['recurrence_prob']:.1f}%")
-                    st.metric("Recurrence-Free Prob", f"{results[treatment]['survival_prob']:.1f}%")
-
             # Find best treatment
             best_treatment = min(results, key=lambda x: results[x]["recurrence_prob"])
             best_risk = results[best_treatment]["recurrence_prob"]
 
+            # Store in session state
+            st.session_state.cf_results = {
+                "baseline_tumors": baseline_tumors,
+                "baseline_size": baseline_size,
+                "time_horizon": time_horizon,
+                "treatments": treatments,
+                "results": results,
+                "best_treatment": best_treatment,
+                "best_risk": best_risk
+            }
+
+    # Display results if they exist
+    if st.session_state.cf_results is not None:
+        cf = st.session_state.cf_results
+
+        st.markdown("---")
+        st.subheader("Treatment Comparison Results")
+
+        col1, col2, col3 = st.columns(3)
+
+        for col, treatment in zip([col1, col2, col3], cf["treatments"]):
+            with col:
+                st.markdown(f"### {treatment.title()}")
+                st.metric("Recurrence Risk", f"{cf['results'][treatment]['recurrence_prob']:.1f}%")
+                st.metric("Recurrence-Free Prob", f"{cf['results'][treatment]['survival_prob']:.1f}%")
+
+        st.markdown("---")
+        st.success(f"### 💊 Recommended Treatment: **{cf['best_treatment'].upper()}**")
+        st.info(f"**Rationale**: {cf['best_treatment'].title()} shows the lowest predicted recurrence risk "
+               f"({cf['best_risk']:.1f}%) at {cf['time_horizon']} months for this patient profile.")
+
+        # AI Treatment Explanation
+        if groq_service:
             st.markdown("---")
-            st.success(f"### 💊 Recommended Treatment: **{best_treatment.upper()}**")
-            st.info(f"**Rationale**: {best_treatment.title()} shows the lowest predicted recurrence risk "
-                   f"({best_risk:.1f}%) at {time_horizon} months for this patient profile.")
+            st.subheader("🤖 AI Treatment Rationale")
 
-            # AI Treatment Explanation
-            if groq_service:
-                st.markdown("---")
-                st.subheader("🤖 AI Treatment Rationale")
+            with st.spinner("Generating personalized treatment explanation..."):
+                patient_profile = {
+                    "Baseline Tumors": cf["baseline_tumors"],
+                    "Tumor Size": f"{cf['baseline_size']} cm",
+                    "Tumor Burden": cf["baseline_tumors"] * cf["baseline_size"]
+                }
 
-                with st.spinner("Generating personalized treatment explanation..."):
-                    patient_profile = {
-                        "Baseline Tumors": baseline_tumors,
-                        "Tumor Size": f"{baseline_size} cm",
-                        "Tumor Burden": baseline_tumors * baseline_size
+                treatment_data = {
+                    tx: {
+                        "risk": cf["results"][tx]["risk"],
+                        "survival": cf["results"][tx]["survival_prob"] / 100
                     }
+                    for tx in cf["treatments"]
+                }
 
-                    treatment_data = {
-                        tx: {
-                            "risk": results[tx]["risk"],
-                            "survival": results[tx]["survival_prob"] / 100
-                        }
-                        for tx in treatments
-                    }
+                explanation = groq_service.explain_treatment_choice(
+                    patient_profile=patient_profile,
+                    treatments=treatment_data,
+                    recommended=cf["best_treatment"]
+                )
 
-                    explanation = groq_service.explain_treatment_choice(
-                        patient_profile=patient_profile,
-                        treatments=treatment_data,
-                        recommended=best_treatment
+                st.info(explanation)
+
+            # Simple comparison summary
+            worst_treatment = max(cf["results"], key=lambda x: cf["results"][x]["recurrence_prob"])
+            worst_risk = cf["results"][worst_treatment]["recurrence_prob"]
+            risk_reduction = ((worst_risk - cf["best_risk"]) / worst_risk) * 100
+
+            best_surv = cf["results"][cf["best_treatment"]]["survival_prob"]
+            worst_surv = cf["results"][worst_treatment]["survival_prob"]
+            surv_improvement = best_surv - worst_surv
+
+            if risk_reduction > 5:  # Only show if meaningful difference
+                with st.expander("📊 Treatment Benefit Summary"):
+                    simple_explanation = groq_service.explain_treatment_simple(
+                        recommended=cf["best_treatment"],
+                        risk_reduction=risk_reduction,
+                        survival_improvement=surv_improvement
                     )
+                    st.success(simple_explanation)
 
-                    st.info(explanation)
+        # Visualize comparison
+        st.subheader("Visual Comparison")
 
-                # Simple comparison summary
-                worst_treatment = max(results, key=lambda x: results[x]["recurrence_prob"])
-                worst_risk = results[worst_treatment]["recurrence_prob"]
-                risk_reduction = ((worst_risk - best_risk) / worst_risk) * 100
+        comp_df = pd.DataFrame({
+            "Treatment": [t.title() for t in cf["treatments"]],
+            "Recurrence Risk (%)": [cf["results"][t]["recurrence_prob"] for t in cf["treatments"]]
+        })
 
-                best_surv = results[best_treatment]["survival_prob"]
-                worst_surv = results[worst_treatment]["survival_prob"]
-                surv_improvement = best_surv - worst_surv
-
-                if risk_reduction > 5:  # Only show if meaningful difference
-                    with st.expander("📊 Treatment Benefit Summary"):
-                        simple_explanation = groq_service.explain_treatment_simple(
-                            recommended=best_treatment,
-                            risk_reduction=risk_reduction,
-                            survival_improvement=surv_improvement
-                        )
-                        st.success(simple_explanation)
-
-            # Visualize comparison
-            st.subheader("Visual Comparison")
-
-            comp_df = pd.DataFrame({
-                "Treatment": [t.title() for t in treatments],
-                "Recurrence Risk (%)": [results[t]["recurrence_prob"] for t in treatments]
-            })
-
-            fig = px.bar(comp_df, x="Treatment", y="Recurrence Risk (%)",
-                        color="Recurrence Risk (%)", color_continuous_scale="RdYlGn_r")
-            st.plotly_chart(fig, use_container_width=True)
-
-        else:
-            st.error("Models not loaded. Please train models first.")
+        fig = px.bar(comp_df, x="Treatment", y="Recurrence Risk (%)",
+                    color="Recurrence Risk (%)", color_continuous_scale="RdYlGn_r")
+        st.plotly_chart(fig, use_container_width=True)
 
 elif page == "🔍 Model Performance":
     st.header("🔍 Model Performance & Evaluation")
